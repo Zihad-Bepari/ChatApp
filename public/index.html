@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unique Chat App</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <style>
+    .fade-in {
+      animation: fadeIn 0.3s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .message-box {
+      word-wrap: break-word;
+      white-space: pre-wrap;
+      position: relative;
+    }
+
+    .timestamp {
+      display: block;
+      font-size: 0.65rem;
+      color: rgba(0, 0, 0, 0.5);
+      margin-top: 2px;
+      text-align: right;
+    }
+
+    #messages::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    #messages::-webkit-scrollbar-thumb {
+      background-color: rgba(0, 0, 0, 0.15);
+      border-radius: 3px;
+    }
+  </style>
+</head>
+
+<body class="bg-white flex items-center justify-center h-screen p-8">
+
+  <!-- Username Screen -->
+  <div id="username-screen" class="w-full max-w-sm bg-white p-6 rounded-3xl border border-gray-200 shadow-lg">
+    <h1 class="text-gray-800 text-2xl font-bold text-center mb-5">
+      Enter your User Name to join RajShoba 💬
+    </h1>
+    <input id="username" type="text" placeholder="Your name..."
+      class="w-full p-3 rounded-2xl bg-gray-100 text-gray-900 border border-gray-300 mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+    <button id="go-to-access"
+      class="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-2xl shadow hover:opacity-90 transition">
+      Next →
+    </button>
+  </div>
+
+  <!-- Access Screen -->
+  <div id="access-screen" class="hidden w-full max-w-sm bg-white p-6 rounded-3xl border border-gray-200 shadow-lg">
+    <h1 class="text-gray-800 text-xl font-bold text-center mb-4">
+      Enter RajShoba Access Key 🔐
+    </h1>
+    <input id="access-key" type="password" placeholder="Access Key..."
+      class="w-full p-3 rounded-2xl bg-gray-100 text-gray-900 border border-gray-300 mb-4 focus:outline-none focus:ring-2 focus:ring-pink-500" />
+    <button id="enter-chat"
+      class="w-full py-3 bg-gradient-to-r from-pink-500 to-red-500 text-white rounded-2xl shadow hover:opacity-90 transition">
+      Enter Chat Room
+    </button>
+  </div>
+
+  <!-- Chat Screen -->
+  <div id="chat-screen" class="hidden w-full max-w-md bg-white border border-gray-200 rounded-3xl shadow-xl flex flex-col h-[560px]">
+    <div
+      class="bg-gradient-to-r from-indigo-500 via-purple-600 to-pink-500 text-white text-center py-4 text-xl font-bold rounded-t-3xl">
+      Rajshoba 💬 Room
+    </div>
+
+    <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-100"></div>
+
+    <form id="message-form" class="flex p-3 bg-gray-200 border-t border-gray-300 gap-2 rounded-b-3xl">
+      <button type="button" id="open-image" class="px-4 py-3 bg-gray-300 text-gray-900 rounded-2xl">📷</button>
+      <input id="image-input" type="file" accept="image/*" class="hidden">
+
+      <button type="button" id="record-btn" class="px-4 py-3 bg-gray-300 text-gray-900 rounded-2xl">🎤</button>
+
+      <input id="message-input" type="text" placeholder="Message..."
+        class="flex-1 p-3 rounded-2xl bg-white text-gray-800 placeholder-gray-500 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+
+      <button type="submit"
+        class="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-semibold rounded-2xl shadow hover:opacity-90 transition">
+        Send
+      </button>
+    </form>
+  </div>
+
+  <script>
+    let socket;
+    let username = "";
+    let recorder;
+    let audioChunks = [];
+    let isRecording = false;
+
+    const message_form = document.getElementById("message-form");
+    const message_input = document.getElementById("message-input");
+    const messages = document.getElementById("messages");
+
+    // Scroll helper
+    function scrollToBottom() {
+      messages.scrollTo({ top: messages.scrollHeight, behavior: "smooth" });
+    }
+
+    document.getElementById("go-to-access").addEventListener("click", () => {
+      username = document.getElementById("username").value.trim();
+      if (!username) return alert("Please enter a username!");
+      document.getElementById("username-screen").classList.add("hidden");
+      document.getElementById("access-screen").classList.remove("hidden");
+    });
+
+    document.getElementById("enter-chat").addEventListener("click", () => {
+      const key = document.getElementById("access-key").value.trim();
+      if (key !== "a") return alert("Invalid Access Key!");
+      document.getElementById("access-screen").classList.add("hidden");
+      document.getElementById("chat-screen").classList.remove("hidden");
+      connectSocket();
+      initVoiceRecorder();
+    });
+
+    function connectSocket() {
+      socket = io("http://localhost:3002", { query: { username } });
+
+      socket.on("Message", msg => {
+        if (typeof msg === "string") {
+          addMessage(msg, "other");
+        } else if (msg.type === "image") {
+          addImageMessage(msg.imageUrl, "other");
+        } else if (msg.type === "voice") {
+          addVoiceMessage(msg.audio, "other");
+        } else if (msg.text) {
+          addMessage(msg.text, "other");
+        }
+      });
+
+      socket.on("User-Joined", data => addMessage(data.message, "system"));
+      socket.on("User-left", data => addMessage(data.message, "system"));
+    }
+
+    function addMessage(msg, type = "other") {
+      const div = document.createElement("div");
+      div.classList.add("fade-in", "message-box");
+      const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      if (type === "system") {
+        div.className = "text-center text-sm text-gray-500 italic fade-in message-box";
+        div.textContent = msg;
+      } else if (type === "me") {
+        div.className = "ml-auto max-w-xs p-3 rounded-xl bg-indigo-500 text-white shadow-md fade-in message-box";
+        div.innerHTML = `${msg}<span class="timestamp">${timestamp}</span>`;
+      } else {
+        div.className = "max-w-xs p-3 rounded-xl bg-white text-gray-900 border border-gray-300 shadow fade-in message-box";
+        div.innerHTML = `${msg}<span class="timestamp">${timestamp}</span>`;
+      }
+
+      messages.appendChild(div);
+      scrollToBottom();
+    }
+
+    document.getElementById("open-image").onclick = () => document.getElementById("image-input").click();
+    document.getElementById("image-input").addEventListener("change", e => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result;
+        addImageMessage(base64, "me");
+        socket.emit("NewImage", { username, imageUrl: base64 });
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function addImageMessage(url, type) {
+      const div = document.createElement("div");
+      div.className =
+        type === "me"
+          ? "ml-auto max-w-xs p-2 rounded-xl bg-indigo-500 text-white shadow fade-in"
+          : "max-w-xs p-2 rounded-xl bg-white border border-gray-300 shadow fade-in";
+
+      div.innerHTML = `
+        <img src="${url}" class="rounded-lg w-full h-auto object-contain">
+        <span class="timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      `;
+
+      messages.appendChild(div);
+      scrollToBottom();
+    }
+
+    function initVoiceRecorder() {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        recorder = new MediaRecorder(stream);
+
+        recorder.ondataavailable = e => audioChunks.push(e.data);
+
+        recorder.onstop = () => {
+          const blob = new Blob(audioChunks, { type: "audio/webm" });
+          const reader = new FileReader();
+
+          reader.onload = () => {
+            const base64Audio = reader.result;
+            addVoiceMessage(base64Audio, "me");
+            socket.emit("NewVoice", { username, audio: base64Audio });
+          };
+
+          reader.readAsDataURL(blob);
+          audioChunks = [];
+        };
+      });
+    }
+
+    document.getElementById("record-btn").addEventListener("click", () => {
+      if (!recorder) return alert("Microphone not available!");
+      if (!isRecording) {
+        recorder.start();
+        isRecording = true;
+        document.getElementById("record-btn").innerText = "⏹";
+      } else {
+        recorder.stop();
+        isRecording = false;
+        document.getElementById("record-btn").innerText = "🎤";
+      }
+    });
+
+    function addVoiceMessage(audioUrl, type = "other") {
+      const div = document.createElement("div");
+      div.className =
+        type === "me"
+          ? "ml-auto max-w-xs p-2 rounded-xl bg-indigo-500 text-white shadow fade-in"
+          : "max-w-xs p-2 rounded-xl bg-white border border-gray-300 shadow fade-in";
+
+      div.innerHTML = `
+        <audio controls class="w-40">
+          <source src="${audioUrl}" type="audio/webm">
+        </audio>
+        <span class="timestamp">${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      `;
+      messages.appendChild(div);
+      scrollToBottom();
+    }
+
+    message_form.addEventListener("submit", e => {
+      e.preventDefault();
+      const message = message_input.value.trim();
+      if (!message) return;
+
+      addMessage(message, "me");
+      socket.emit("NewMessage", { username, text: message });
+      message_input.value = "";
+    });
+  </script>
+
+</body>
+</html>

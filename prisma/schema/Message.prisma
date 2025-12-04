@@ -1,0 +1,15 @@
+model Message {
+  id         Int       @id @default(autoincrement())
+  text       String?   @db.Text
+  imageUrl   String?   @db.Text
+  audioUrl   String?   @db.Text
+  type       MessageType
+  createdAt  DateTime  @default(now())
+  user       String
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VOICE
+}
